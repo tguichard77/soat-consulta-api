@@ -4,9 +4,11 @@ Servidor FastAPI para consulta de SOAT via APESEG.
 Expone: POST /consulta  { "placa": "9840LD" }
 Devuelve: { "estado": ..., "aseguradora": ..., "vigencia_fin": ... }
 Usa 2captcha para resolver captchas (sin EasyOCR, liviano en memoria).
+Compatible con pydantic v1.
 """
 
-import sys, requests, warnings, base64, json, os, time
+import requests, warnings, base64, json, os, time
+from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -34,23 +36,21 @@ class ConsultaRequest(BaseModel):
     placa: str
 
 class ConsultaResponse(BaseModel):
-    estado: str | None
-    aseguradora: str | None
-    vigencia_fin: str | None
+    estado: Optional[str]
+    aseguradora: Optional[str]
+    vigencia_fin: Optional[str]
 
 
 # ── captcha via 2captcha ──────────────────────────────────────────────────────
 
-def resolver_captcha_2captcha(img_base64: str) -> str | None:
+def resolver_captcha_2captcha(img_base64: str):
     """Envía imagen a 2captcha y espera el resultado."""
     if not TWOCAPTCHA_KEY:
         return None
     try:
-        # Limpiar prefijo data:image si existe
         if "," in img_base64:
             img_base64 = img_base64.split(",", 1)[1]
 
-        # Enviar captcha
         r = requests.post("https://2captcha.com/in.php", data={
             "key": TWOCAPTCHA_KEY,
             "method": "base64",
@@ -59,13 +59,12 @@ def resolver_captcha_2captcha(img_base64: str) -> str | None:
         }, timeout=30)
         data = r.json()
         if data.get("status") != 1:
-            print(f"❌ 2captcha error al enviar: {data}", flush=True)
+            print("❌ 2captcha error al enviar: {}".format(data), flush=True)
             return None
 
         captcha_id = data["request"]
-        print(f"📤 Captcha enviado a 2captcha, id={captcha_id}", flush=True)
+        print("📤 Captcha enviado a 2captcha, id={}".format(captcha_id), flush=True)
 
-        # Esperar resultado (máx 60s)
         for _ in range(20):
             time.sleep(3)
             r2 = requests.get("https://2captcha.com/res.php", params={
@@ -77,16 +76,16 @@ def resolver_captcha_2captcha(img_base64: str) -> str | None:
             d2 = r2.json()
             if d2.get("status") == 1:
                 texto = d2["request"].strip().lower()
-                print(f"✅ 2captcha resolvió: '{texto}'", flush=True)
+                print("✅ 2captcha resolvió: '{}'".format(texto), flush=True)
                 return texto
             if d2.get("request") != "CAPCHA_NOT_READY":
-                print(f"❌ 2captcha error: {d2}", flush=True)
+                print("❌ 2captcha error: {}".format(d2), flush=True)
                 return None
 
         print("❌ 2captcha timeout", flush=True)
         return None
     except Exception as e:
-        print(f"❌ 2captcha excepción: {e}", flush=True)
+        print("❌ 2captcha excepción: {}".format(e), flush=True)
         return None
 
 
@@ -121,10 +120,10 @@ def clear_token():
 
 def do_login(session):
     r = session.post(
-        f"{BASE_URL}/consulta-soat/api/login",
+        "{}/consulta-soat/api/login".format(BASE_URL),
         headers={
             "Content-Type": "application/json",
-            "Referer": f"{BASE_URL}/consulta-soat/?source=soat",
+            "Referer": "{}/consulta-soat/?source=soat".format(BASE_URL),
             "Origin": BASE_URL,
             "User-Agent": "Mozilla/5.0 Chrome/120",
         },
@@ -141,12 +140,12 @@ def do_login(session):
 def resolver_captcha_y_login(session):
     """Resuelve captcha con 2captcha, hace login y devuelve token."""
     for intento in range(1, 6):
-        print(f"🔄 Intento captcha {intento}/5...", flush=True)
+        print("🔄 Intento captcha {}/5...".format(intento), flush=True)
         r = session.get(
-            f"{BASE_URL}/captcha-api/api/captcha",
+            "{}/captcha-api/api/captcha".format(BASE_URL),
             headers={
                 "X-App-Secret": CAPTCHA_SECRET,
-                "Referer": f"{BASE_URL}/consulta-soat/?source=soat",
+                "Referer": "{}/consulta-soat/?source=soat".format(BASE_URL),
                 "Origin": BASE_URL,
                 "User-Agent": "Mozilla/5.0 Chrome/120",
             },
@@ -161,25 +160,25 @@ def resolver_captcha_y_login(session):
             continue
 
         r2 = session.post(
-            f"{BASE_URL}/captcha-api/api/captcha/verify",
+            "{}/captcha-api/api/captcha/verify".format(BASE_URL),
             headers={
                 "Content-Type": "application/json",
                 "X-App-Secret": CAPTCHA_SECRET,
-                "Referer": f"{BASE_URL}/consulta-soat/?source=soat",
+                "Referer": "{}/consulta-soat/?source=soat".format(BASE_URL),
                 "Origin": BASE_URL,
             },
             json={"captcha": texto, "key": key},
             timeout=15
         )
         if r2.json().get("valid", False):
-            print(f"✅ Captcha verificado: '{texto}'", flush=True)
+            print("✅ Captcha verificado: '{}'".format(texto), flush=True)
             token, err = do_login(session)
             if token:
                 save_token(token)
                 return token
-            raise RuntimeError(f"Login fallido: {err}")
+            raise RuntimeError("Login fallido: {}".format(err))
         else:
-            print(f"❌ Captcha incorrecto: '{texto}'", flush=True)
+            print("❌ Captcha incorrecto: '{}'".format(texto), flush=True)
 
     raise RuntimeError("No se pudo resolver el captcha después de 5 intentos")
 
@@ -190,18 +189,18 @@ def parse_fecha(fecha_str):
     try:
         parts = fecha_str.split("/")
         if len(parts) == 3:
-            return f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+            return "{}-{}-{}".format(parts[2], parts[1].zfill(2), parts[0].zfill(2))
     except:
         pass
     return fecha_str
 
 
-# ── endpoint ─────────────────────────────────────────────────────────────────
+# ── endpoints ─────────────────────────────────────────────────────────────────
 
 @app.post("/consulta", response_model=ConsultaResponse)
 def consultar(req: ConsultaRequest):
     placa = req.placa.strip().upper()
-    print(f"🔍 Consultando placa: {placa}", flush=True)
+    print("🔍 Consultando placa: {}".format(placa), flush=True)
 
     session = requests.Session()
     session.verify = False
@@ -222,17 +221,17 @@ def consultar(req: ConsultaRequest):
         formatos.append(placa_clean[:4] + "-" + placa_clean[4:])
 
     headers_consulta = {
-        "Authorization": f"Bearer {token}",
+        "Authorization": "Bearer {}".format(token),
         "X-Source": "soat",
         "X-Referrer": "https://www.soat.com.pe/",
-        "Referer": f"{BASE_URL}/consulta-soat/poliza",
+        "Referer": "{}/consulta-soat/poliza".format(BASE_URL),
         "Origin": BASE_URL,
         "User-Agent": "Mozilla/5.0 Chrome/120",
     }
 
     for fmt in formatos:
         r = session.get(
-            f"{BASE_URL}/consulta-soat/api/certificados/placa/{fmt}",
+            "{}/consulta-soat/api/certificados/placa/{}".format(BASE_URL, fmt),
             headers=headers_consulta,
             timeout=20
         )
@@ -242,11 +241,11 @@ def consultar(req: ConsultaRequest):
             clear_token()
             try:
                 token = resolver_captcha_y_login(session)
-                headers_consulta["Authorization"] = f"Bearer {token}"
+                headers_consulta["Authorization"] = "Bearer {}".format(token)
             except RuntimeError as e:
                 raise HTTPException(status_code=500, detail=str(e))
             r = session.get(
-                f"{BASE_URL}/consulta-soat/api/certificados/placa/{fmt}",
+                "{}/consulta-soat/api/certificados/placa/{}".format(BASE_URL, fmt),
                 headers=headers_consulta,
                 timeout=20
             )

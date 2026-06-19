@@ -1,0 +1,7 @@
+fastapi==0.137.1
+uvicorn==0.49.0
+easyocr==1.7.2
+Pillow>=10.0.0
+numpy>=1.24.0
+requests==2.34.2
+pydantic==2.13.4
